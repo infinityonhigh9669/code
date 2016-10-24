@@ -1,0 +1,315 @@
+#!/bin/bash
+#
+# Program: fcloud tools
+# Author: scott
+
+trap 'stop' SIGUSR1 SIGINT SIGHUP SIGQUIT SIGTERM SIGSTOP
+
+source /sync/config/site.list
+
+ROOT="/sync"
+Example_Root="${ROOT}/Example_conf"
+
+# Proxy
+Proxy_Mirror=(/etc/nginx /usr/share/nginx/html)
+Proxy_Root="${ROOT}/Proxy"
+Proxy_Example="${Example_Root}/Proxy"
+Proxy_cache="/var/nginx/cache"
+
+# Source
+Source_Mirror="/etc/nginx"
+Source_Root="${ROOT}/Source"
+Source_Example="${Example_Root}/Source"
+
+# Setting
+KEY_DIR="/etc/fcloud/service/key"
+THREAD=5
+TIME_RETRY=1
+SERVICE=(nginx iptables)
+
+# Format date time
+DATETIME=`date +"%x %T"`
+
+COLOR_REST='\033[0m'
+COLOR_GREEN='\033[033;32m'
+COLOR_HIGHGREEN='\033[033;36m'
+COLOR_RED='\033[033;31m'
+COLOR_BLUE_WHITE='\033[033;34;47m'
+
+
+stop() {
+	exit 0
+}
+
+helpmsg() {
+	echo "Usage: $0"
+	echo -e "${COLOR_BLUE_WHITE}Proxy Root => $Proxy_Root${COLOR_REST}"
+	echo -e "${COLOR_BLUE_WHITE}Source Root => $Source_Root${COLOR_REST}"
+	echo -e "${COLOR_BLUE_WHITE}Example Root => $Example_Root${COLOR_REST}"
+	echo ""
+	echo "SYNC: [Site] [Type] [Option]"
+	echo "  Site:        bjh, hjc, yyh, kl, master, brands"
+	echo "  Type:        -s , -p (source, proxy), -d (create domain)"
+	echo "  Option:      reload, restart, status, cache"
+	echo ""
+	echo "Example:"
+	echo "* Rsync site config and restart service"
+	echo "    $0 -s bjh reload"
+	echo "    $0 -s -p hjc restart"
+	echo ""
+	echo "* Clear proxy cache"
+	echo "    $0 bjh cache"
+	echo "    $0 yyh cache"
+	echo ""
+	echo "* Create config from site name (Proxy,Source)"
+	echo "    $0 -d yahoo.com master"
+	echo "    $0 -d google.com bjh"
+	echo ""
+}
+
+finishmsg() {
+	DATETIME_END=`date +%s`
+	time=`expr "$DATETIME_END" - "$DATETIME_START"`
+	min=`expr $time / 60`
+	sec=`expr $time % 60`
+	echo -e "${COLOR_HIGHGREEN}Sync is complete at $DATETIME !! spend time : $min min $sec second.${COLOR_REST}"
+}
+
+domain_add(){
+	if [[ ${Target_domain} = +(*.com|*.net|*.info|*.cc|*.co|*.top) ]]; then
+		echo -e "${COLOR_GREEN}Add site/domain: ${Site}/${Target_domain}${COLOR_REST}"
+		echo -e "Target: ${Proxy_Root}/etc/nginx/conf.d/${Site}"
+		if [[ -f ${Proxy_Example}/proxy_${Site}.conf ]]; then
+			cp ${Proxy_Example}/proxy_${Site}.conf ${Proxy_Root}/etc/nginx/conf.d/${Site}/${Target_domain}.conf
+			sed -i "s/example.com/${Target_domain}/g" ${Proxy_Root}/etc/nginx/conf.d/${Site}/${Target_domain}.conf
+			if [[ -f ${Proxy_Root}/etc/nginx/conf.d/${Site}/${Target_domain}.conf ]]; then
+				echo "${Site} add proxy: `ls ${Proxy_Root}/etc/nginx/conf.d/${Site}/${Target_domain}.conf`"
+			fi
+		fi
+
+		if [[ -f ${Source_Example}/source_${Site}.conf ]]; then
+			cp ${Source_Example}/source_${Site}.conf ${Source_Root}/${Site}/etc/nginx/conf.d/${Target_domain}.conf
+			sed -i "s/example.com/${Target_domain}/g" ${Source_Root}/${Site}/etc/nginx/conf.d/${Target_domain}.conf
+			if [[ -f ${Source_Root}/${Site}/etc/nginx/conf.d/${Target_domain}.conf ]]; then
+				echo "${Site} add source: `ls ${Source_Root}/${Site}/etc/nginx/conf.d/${Target_domain}.conf`"
+			fi
+		else
+			echo "**The example configuration file can't create because it does not exist."
+		fi
+	else
+		echo "Error: Domain ${Target_domain} not allowed value."
+	fi
+}
+
+cache_Remove() {
+	for (( i = 0; i < ${#CLASS[@]}; i++ )); do
+		if [[ ${Site} == ${TYPE[i]} ]]; then
+			if [[ "PROXY" == ${CLASS[i]} ]]; then
+				if [[ 1 -eq ${PUT[i]} ]]; then
+					Rcmd ${KEY_DIR}/${KEY[i]} ${IP[i]} "fix -cache " &
+					wait
+					echo -e "${COLOR_GREEN}${DEST[i]} cache clean finish.${COLOR_REST}"
+				fi
+			fi
+		fi
+	done
+}
+
+proxy_sync(){
+	DATETIME_START=`date +%s`
+	Proxy_Site="${Proxy_Root}"
+	echo -e "${COLOR_HIGHGREEN}START init ${Proxy_Site}${COLOR_REST}"
+
+	# Accord the type of priofity
+	for (( p = 0; p < 2 ; p++ )); do
+		for (( i = 0; i < ${#CLASS[@]}; i++ )); do
+			if [[ "PROXY" == ${CLASS[i]} ]]; then
+				if [[ 1 -eq ${PUT[i]} ]]; then
+					if [[ ( 0 -eq p && ${Site} == ${TYPE[i]} ) || ( 1 -eq p &&  ${Site} != ${TYPE[i]} ) ]]; then
+						echo -e "${COLOR_RED}SYNC ${DEST[i]} - ${IP[i]}${COLOR_REST}"
+
+						# mirror
+						echo -e "${COLOR_GREEN}Mirror Contents${COLOR_REST}"
+						for (( l = 0; l < ${#Proxy_Mirror[@]}; l++ )); do
+							rsync_exec ${KEY_DIR}/${KEY[i]} ${IP[i]} ${Proxy_Site}${Proxy_Mirror[l]}/ ${Proxy_Mirror[l]}/ --delete
+							if [[ 0 -ne $? ]]; then
+								for (( j = 0; j < ${TIME_RETRY}; j++ )); do
+									rsync_exec ${KEY_DIR}/${KEY[i]} ${IP[i]} ${Proxy_Site}${Proxy_Mirror[l]}/ ${Proxy_Mirror[l]}/ --delete
+									if [[ 0 -eq $? ]]; then
+										break
+									fi
+								done
+							fi
+						done
+
+						# sync without mirror
+						echo -e "${COLOR_GREEN}SYNC Contents${COLOR_REST}"
+						rsync_exec ${KEY_DIR}/${KEY[i]} ${IP[i]} ${Proxy_Site}/ /
+						if [[ 0 -ne $? ]]; then
+							for (( j = 0; j < ${TIME_RETRY}; j++ )); do
+								rsync_exec ${KEY_DIR}/${KEY[i]} ${IP[i]} ${Proxy_Site}/ /
+								if [[ 0 -eq $? ]]; then
+									break
+								fi
+							done
+						fi
+						service_exec
+						echo -e "${COLOR_RED}SYNC ${DEST[i]} - ${IP[i]} Finish !!!!!${COLOR_REST}"
+					fi
+				fi
+			fi
+		done
+	done
+	finishmsg
+}
+
+source_sync(){
+	DATETIME_START=`date +%s`
+	Source_Site="${Source_Root}/${Site}"
+	echo -e "${COLOR_HIGHGREEN}START init ${Source_Site}${COLOR_REST}"
+
+	for (( i = 0; i < ${#CLASS[@]}; i++ )); do
+		if [[ ${Site} == ${TYPE[i]} ]]; then
+			if [[ "SOURCE" == ${CLASS[i]} ]]; then
+				if [[ 1 -eq ${PUT[i]} ]]; then
+					echo -e "${COLOR_GREEN}SYNC ${DEST[i]} - ${IP[i]}${COLOR_REST}"
+					# mirror
+					rsync_exec ${KEY_DIR}/${KEY[i]} ${IP[i]} ${Source_Site}${Source_Mirror}/ ${Source_Mirror}/ --delete
+
+					# RETRY Error
+					if [[ 0 -ne $? ]]; then
+						for (( j = 0; j < ${TIME_RETRY}; j++ )); do
+							rsync_exec ${KEY_DIR}/${KEY[i]} ${IP[i]} ${Source_Site}/ /
+							if [[ 0 -eq $? ]]; then
+								break
+							fi
+						done
+					fi
+
+					# sync without mirror
+					rsync_exec ${KEY_DIR}/${KEY[i]} ${IP[i]} ${Source_Site}/ /
+					if [[ 0 -ne $? ]]; then
+						for (( j = 0; j < ${TIME_RETRY}; j++ )); do
+							rsync_exec ${KEY_DIR}/${KEY[i]} ${IP[i]} ${Source_Site}/ /
+							if [[ 0 -eq $? ]]; then
+								break
+							fi
+						done
+					fi
+					service_exec
+				fi
+			fi
+		fi
+	done
+	finishmsg
+}
+
+# $1=KEY, $2=IP, $3=SourceFile, $4=RemoteFile
+rsync_exec() {
+	if [[ "--delete" == ${@: -1} ]]; then
+		rsync -avz --progress ${@: -1} -e "ssh -i $1 -o ConnectTimeout=2" $3 root@${2}:${4}
+	else
+		rsync -avz --progress -e "ssh -i $1 -o ConnectTimeout=2" $3 root@${2}:${4}
+	fi
+}
+
+
+service_exec() {
+	if [[ $ServiceStatus ]]; then
+		for (( x = 0; x < ${#SERVICE[@]}; x++ )); do
+			echo -e "${COLOR_HIGHGREEN}${SERVICE[x]} Service init${COLOR_REST}"
+			Rcmd ${KEY_DIR}/${KEY[i]} ${IP[i]} "service ${SERVICE[x]} ${ServiceStatus}"
+		done
+	fi
+}
+
+# $1=KEY, $2=IP, $3=Command
+Rcmd() {
+	cmdKey=$1
+	shift
+	cmdHost=$1
+	shift
+	ssh -i $cmdKey -2 -o ConnectTimeout=$TIME_RETRY root@$cmdHost "$@"
+}
+
+SiteType=()
+
+if [[ $# -gt 1 ]]; then
+	for opt in $@
+	do
+		case $opt in
+####################### SYNC #######################
+			# Site
+			bjh)
+				Site="bjh";;
+			hjc)
+				Site="hjc";;
+			yyh)
+				Site="yyh";;
+			kl)
+				Site="kl";;
+			master)
+				Site="master";;
+			brands)
+				Site="brands";;
+
+			# Type
+			-s)
+				SiteType+=('Source');;
+			-p)
+				SiteType+=('Proxy');;
+			-d)
+				shift
+				Target_domain="$1";;
+			cache)
+				rcache="1";;
+
+			# Other option
+			reload)
+				ServiceStatus="reload";;
+			restart)
+				ServiceStatus="restart";;
+			status)
+				ServiceStatus="status";;
+
+			# Help
+			-h|--help|-help)
+				helpmsg
+				exit;;
+		esac
+	done
+
+	# add domain
+	if [[ ${Site} && ${Target_domain} ]]; then
+		domain_add
+	fi
+
+	# sync all site
+	if [[ ${Site} && ${SiteType} ]]; then
+		for (( k = 0; k < ${#SiteType[@]}; k++ )); do
+			if [[ "Proxy" == ${SiteType[k]} ]]; then
+			 	proxy_sync
+			elif [[ "Source" == ${SiteType[k]} ]]; then
+			 	source_sync
+			fi
+		done
+	fi
+
+	# Remove Proxy cache
+	if [[ ${Site} && ${rcache} ]]; then
+		if [[ 1 -eq ${rcache} ]]; then
+			cache_Remove
+		fi
+	fi
+
+else
+	helpmsg
+fi
+
+
+
+
+
+
+
+

@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # Program: fcloud tools
-# Author: scott
+# Author: T-Bone Lu
 
 trap 'stop' SIGUSR1 SIGINT SIGHUP SIGQUIT SIGTERM SIGSTOP
 

@@ -2,6 +2,7 @@
 #
 # Program: fcloud tools
 # Author: T-Bone Lu
+# Redited Day: 2016.10.24.2204
 
 trap 'stop' SIGUSR1 SIGINT SIGHUP SIGQUIT SIGTERM SIGSTOP
 

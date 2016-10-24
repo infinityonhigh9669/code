@@ -3,7 +3,7 @@
 auto_ssh() {
     host=192.168.50.6
     id=root
-    pass=ao3eji62jo45;3
+    pass=$3
     scripts="~/var/log/scripts/"
 
     expect -c "

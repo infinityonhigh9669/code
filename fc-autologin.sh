@@ -1,9 +1,9 @@
 #! /bin/sh
 
 auto_ssh() {
-    host=$1
-    id=$2
-    pass=$3
+    host=192.168.50.6
+    id=root
+    pass=ao3eji62jo45;3
     scripts="~/var/log/scripts/"
 
     expect -c "

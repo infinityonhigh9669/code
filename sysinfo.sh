@@ -1,7 +1,6 @@
 #!/bin/bash
 #**********************************************************
-#       Copyright (c) 2016 T-Bone
-#                          All rights reserved.
+# When Login, show these hardware info.
 #**********************************************************
 trap '' SIGUSR1 SIGINT SIGHUP SIGQUIT SIGTERM SIGSTOP
 PROGRAMNAME=${0##*/}
